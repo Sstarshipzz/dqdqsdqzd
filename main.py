@@ -965,43 +965,85 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Ajoutez ces gestionnaires pour la navigation entre les médias
     elif query.data.startswith(("next_media_", "prev_media_")):
-        try:
-            _, direction, category, product_name = query.data.split("_", 3)
+        is_next = query.data.startswith("next_media_")
+        _, _, category, product_name = query.data.split("_", 3)
+    
+        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
+        if product and 'media' in product and product['media']:
+            media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
+            total_media = len(media_list)
         
-            product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
+            current_index = context.user_data.get('current_media_index', 0)
+            if is_next:
+                current_index = (current_index + 1) % total_media
+            else:
+                current_index = (current_index - 1) % total_media
+            context.user_data['current_media_index'] = current_index
         
-            if product and 'media' in product:
-                current_index = context.user_data.get('current_media_index', 0)
-                total_media = len(product['media'])
+            current_media = media_list[current_index]
+        
+            caption = f"📱 *{product['name']}*\n\n"
+            caption += f"💰 *Prix:*\n{product['price']}\n\n"
+            caption += f"📝 *Description:*\n{product['description']}"
+        
+            keyboard = [
+                [
+                    InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
+                    InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
+                ],
+                [InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]
+            ]
+        
+            if current_media['media_type'] == 'photo':
+                await query.message.edit_media(
+                    media=InputMediaPhoto(
+                        media=current_media['media_id'],
+                        caption=caption,
+                        parse_mode='Markdown'
+                    ),
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                await query.message.edit_media(
+                    media=InputMediaVideo(
+                        media=current_media['media_id'],
+                        caption=caption,
+                        parse_mode='Markdown'
+                    ),
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+        
+        await query.answer()
+        return CHOOSING
+
+    elif query.data.startswith("product_"):
+        _, category, product_name = query.data.split("_", 2)
+        context.user_data['current_media_index'] = 0
+        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
+    
+        if product:
+            caption = f"📱 *{product['name']}*\n\n"
+            caption += f"💰 *Prix:*\n{product['price']}\n\n"
+            caption += f"📝 *Description:*\n{product['description']}"
+        
+            keyboard = [[InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]]
+
+            if 'media' in product and product['media']:
+                # Si le produit a des médias
+                media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
+                total_media = len(media_list)
+                current_media = media_list[0]
             
-                if direction == "next":
-                    current_index = (current_index + 1) % total_media
-                else:  # prev
-                    current_index = (current_index - 1) % total_media
-            
-                context.user_data['current_media_index'] = current_index
-            
-                # Préparer le message avec numérotation séquentielle
-                caption = f"📱 *{product['name']}*\n\n"
-                caption += f"💰 *Prix:*\n{product['price']}\n\n"
-                caption += f"📝 *Description:*\n{product['description']}"
-                caption += f"\n\n📸 Média {current_index + 1}/{total_media}"  # Numérotation simplifiée
-            
-                keyboard = []
+                # Ajouter les boutons de navigation si plus d'un média
                 if total_media > 1:
-                    keyboard.append([
+                    nav_buttons = [
                         InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
                         InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
-                    ])
+                    ]
+                    keyboard.insert(0, nav_buttons)
             
-                keyboard.append([InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")])
+                await query.message.delete()
             
-                try:
-                    await query.message.delete()
-                except Exception as e:
-                    print(f"Erreur lors de la suppression du message: {e}")
-            
-                current_media = product['media'][current_index]
                 if current_media['media_type'] == 'photo':
                     message = await context.bot.send_photo(
                         chat_id=query.message.chat_id,
@@ -1010,7 +1052,7 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
-                else:  # video
+                else:
                     message = await context.bot.send_video(
                         chat_id=query.message.chat_id,
                         video=current_media['media_id'],
@@ -1018,12 +1060,15 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
+            else:
+                # Si le produit n'a pas de médias
+                await query.message.edit_text(
+                    text=caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
             
-                context.user_data['last_product_message_id'] = message.message_id
-            
-        except Exception as e:
-            print(f"Erreur lors de la navigation des médias: {e}")
-            await query.answer("Une erreur est survenue")
+            return CHOOSING
 
     elif query.data == "show_categories":
         keyboard = []
@@ -1200,58 +1245,31 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data.startswith("view_"):
         category = query.data.replace("view_", "")
-    
-        # Supprimer les messages précédents des médias
-        if 'current_media_messages' in context.user_data:
-            for msg_id in context.user_data['current_media_messages']:
-                try:
-                    await context.bot.delete_message(
-                        chat_id=query.message.chat_id,
-                        message_id=msg_id
-                    )
-                except Exception as e:
-                    print(f"Erreur lors de la suppression d'un message média: {e}")
-            context.user_data['current_media_messages'] = []
-
-        # Créer le nouveau message au lieu de modifier l'existant
-        keyboard = []
         if category in CATALOG:
+            # Afficher tous les produits de la catégorie
+            keyboard = []
             for product in CATALOG[category]:
-                keyboard.append([InlineKeyboardButton(product['name'], 
-                    callback_data=f"product_{category}_{product['name']}")])
-        keyboard.append([InlineKeyboardButton("🔙 Retour aux catégories", callback_data="view_categories")])
-    
-        # Supprimer l'ancien message
-        try:
-            await query.message.delete()
-        except Exception as e:
-            print(f"Erreur lors de la suppression du message: {e}")
-
-        # Créer un nouveau message
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"📱 Produits dans {category} :",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
+                keyboard.append([InlineKeyboardButton(product['name'], callback_data=f"product_{category}_{product['name']}")])
+            keyboard.append([InlineKeyboardButton("🔙 Retour aux catégories", callback_data="view_categories")])
+        
+            await query.message.edit_text(
+                f"📱 Produits dans {category} :",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         return CHOOSING
 
-    elif query.data == "show_categories":
+    elif query.data == "view_categories":
+        # Afficher toutes les catégories
         keyboard = []
-        # Créer uniquement les boutons de catégories
         for category in CATALOG.keys():
-            if category != 'stats':
-                keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
-        
-        # Ajouter uniquement le bouton retour à l'accueil
-        keyboard.append([InlineKeyboardButton("🔙 Retour à l'accueil", callback_data="back_to_home")])
-        
-        await query.edit_message_text(
-            "📋 *Menu des catégories*\n\n"
-            "Choisissez une catégorie pour voir les produits :",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+            keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
+        keyboard.append([InlineKeyboardButton("🔙 Retour au menu", callback_data="start")])
+    
+        await query.message.edit_text(
+            "📱 Choisissez une catégorie :",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return CHOOSING
 
     elif query.data == "back_to_home":
         keyboard = [
