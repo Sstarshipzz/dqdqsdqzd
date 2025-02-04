@@ -436,21 +436,19 @@ async def handle_product_description(update: Update, context: ContextTypes.DEFAU
     """Gère la description du produit"""
     context.user_data['temp_product_description'] = update.message.text
 
-    # Supprimer le message de la description envoyé par l'utilisateur
+    # Supprimer le message de l'utilisateur
     await update.message.delete()
 
-    # Récupérer et supprimer le message de demande de description
-    description_message_id = context.user_data.get('description_message_id')
-    if description_message_id:
+    # Supprimer le message de demande de description
+    if context.user_data.get('description_msg_id'):  # Utilisation du nouveau nom
         try:
             await context.bot.delete_message(
                 chat_id=update.effective_chat.id,
-                message_id=description_message_id
+                message_id=context.user_data['description_msg_id']
             )
         except Exception as e:
             print(f"Erreur lors de la suppression du message de description: {e}")
 
-    # Envoyer le nouveau message pour les médias
     message = await update.message.reply_text(
         "📸 Envoyez les photos ou vidéos du produit (plusieurs possibles)\n"
         "Si vous ne souhaitez pas ajouter de médias, cliquez sur Ignorer :",
@@ -920,7 +918,7 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                             parse_mode='Markdown'
                         )
                 else:
-                    # Pour plusieurs médias
+                        # Pour plusieurs médias
                     media_group = []
                     for i, media in enumerate(media_list):
                         if media['media_type'] == 'photo':
@@ -945,11 +943,13 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                     # Stocker les IDs des messages pour la suppression future
                     context.user_data['current_media_messages'] = [msg.message_id for msg in messages]
                 
-                    # Envoyer le bouton juste après le dernier média
+                    # Envoyer le bouton de retour
                     message = await context.bot.send_message(
                         chat_id=query.message.chat_id,
-                        text="",  # Texte vide car le caption est déjà dans le premier média
-                        reply_markup=InlineKeyboardMarkup(keyboard)
+                        text="🔙",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("Retour à la catégorie", callback_data=f"view_{category}")
+                        ]])
                     )
             else:
                 # Si le produit n'a pas de médias
@@ -1633,10 +1633,10 @@ async def waiting_product_price(update: Update, context: ContextTypes.DEFAULT_TY
     """Gère le prix du produit"""
     context.user_data['temp_product_price'] = update.message.text
 
-    # Supprimer le message du prix envoyé par l'utilisateur
+    # Supprimer le message de l'utilisateur
     await update.message.delete()
 
-    # Supprimer le message précédent de demande de prix
+    # Supprimer le message précédent
     if context.user_data.get('last_message_id'):
         try:
             await context.bot.delete_message(
@@ -1646,9 +1646,9 @@ async def waiting_product_price(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             print(f"Erreur lors de la suppression du message: {e}")
 
-    # Envoyer et stocker le message de demande de description
-    message = await update.message.reply_text("📝 Veuillez entrer la description du produit :")
-    context.user_data['description_message_id'] = message.message_id  # Nouveau: stockage spécifique pour le message de description
+    # Stocker le message de description pour le supprimer plus tard
+    desc_message = await update.message.reply_text("📝 Veuillez entrer la description du produit :")
+    context.user_data['description_msg_id'] = desc_message.message_id  # Nouveau nom de variable
     
     return WAITING_PRODUCT_DESCRIPTION
 
