@@ -893,54 +893,74 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         
             keyboard = [[InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]]
 
+            # Supprimer le message précédent
+            await query.message.delete()
+
             if 'media' in product and product['media']:
                 # Si le produit a des médias
                 media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
             
-                # Créer un groupe de médias
-                media_group = []
-                first_media = True
-            
-                for media in media_list:
+                if len(media_list) == 1:
+                    # Si un seul média, l'envoyer avec le bouton
+                    media = media_list[0]
                     if media['media_type'] == 'photo':
-                        media_item = InputMediaPhoto(
-                            media=media['media_id'],
-                            caption=caption if first_media else None,
-                            parse_mode='Markdown' if first_media else None
+                        message = await context.bot.send_photo(
+                            chat_id=query.message.chat_id,
+                            photo=media['media_id'],
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='Markdown'
                         )
-                    else:  # video
-                        media_item = InputMediaVideo(
-                            media=media['media_id'],
-                            caption=caption if first_media else None,
-                            parse_mode='Markdown' if first_media else None
+                    else:
+                        message = await context.bot.send_video(
+                            chat_id=query.message.chat_id,
+                            video=media['media_id'],
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='Markdown'
                         )
-                    media_group.append(media_item)
-                    first_media = False
-            
-                # Supprimer le message précédent
-                await query.message.delete()
-            
-                # Envoyer le groupe de médias
-                messages = await context.bot.send_media_group(
-                    chat_id=query.message.chat_id,
-                    media=media_group
-                )
-            
-                # Envoyer le bouton de retour séparément
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="Options :",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            
+                else:
+                    # Pour plusieurs médias
+                    media_group = []
+                    for i, media in enumerate(media_list):
+                        if media['media_type'] == 'photo':
+                            media_item = InputMediaPhoto(
+                                media=media['media_id'],
+                                caption=caption if i == 0 else None,
+                                parse_mode='Markdown' if i == 0 else None
+                            )
+                        else:
+                            media_item = InputMediaVideo(
+                                media=media['media_id'],
+                                caption=caption if i == 0 else None,
+                                parse_mode='Markdown' if i == 0 else None
+                            )
+                        media_group.append(media_item)
+
+                    messages = await context.bot.send_media_group(
+                        chat_id=query.message.chat_id,
+                        media=media_group
+                    )
+                
+                    # Stocker les IDs des messages pour la suppression future
+                    context.user_data['current_media_messages'] = [msg.message_id for msg in messages]
+                
+                    # Envoyer le bouton juste après le dernier média
+                    message = await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text="",  # Texte vide car le caption est déjà dans le premier média
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
             else:
                 # Si le produit n'a pas de médias
-                await query.message.edit_text(
+                message = await context.bot.send_message(
+                    chat_id=query.message.chat_id,
                     text=caption,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
-            
+        
+            context.user_data['last_message_id'] = message.message_id
             return CHOOSING
 
     # Ajoutez ces gestionnaires pour la navigation entre les médias
@@ -1180,48 +1200,37 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data.startswith("view_"):
         category = query.data.replace("view_", "")
-        if category in CATALOG:
-            products = CATALOG[category]
-        
-            # Si on revient d'un produit avec média, supprimer le message du produit
-            last_product_message_id = context.user_data.get('last_product_message_id')
-            if last_product_message_id:
+    
+        # Supprimer les messages précédents des médias
+        if 'current_media_messages' in context.user_data:
+            for msg_id in context.user_data['current_media_messages']:
                 try:
                     await context.bot.delete_message(
                         chat_id=query.message.chat_id,
-                        message_id=last_product_message_id
+                        message_id=msg_id
                     )
-                    del context.user_data['last_product_message_id']
                 except Exception as e:
-                    print(f"Erreur lors de la suppression du message produit: {e}")
+                    print(f"Erreur lors de la suppression d'un message média: {e}")
+            context.user_data['current_media_messages'] = []
 
-            # Afficher la liste des produits
-            text = f"*{category}*\n\n"
+        # Supprimer le message du bouton
+        try:
+            await query.message.delete()
+        except Exception as e:
+            print(f"Erreur lors de la suppression du message: {e}")
+
+        if category in CATALOG:
+            # Afficher tous les produits de la catégorie
             keyboard = []
-            for product in products:
-                keyboard.append([InlineKeyboardButton(
-                    product['name'],
-                    callback_data=f"product_{category}_{product['name']}"
-                )])
-            
-            keyboard.append([InlineKeyboardButton("🔙 Retour au menu", callback_data="show_categories")])
-            
-            # Envoyer un nouveau message si nécessaire
-            if query.message:
-                try:
-                    await query.edit_message_text(
-                        text=text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-                except Exception as e:
-                    print(f"Erreur lors de l'édition du message: {e}")
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
+            for product in CATALOG[category]:
+                keyboard.append([InlineKeyboardButton(product['name'], callback_data=f"product_{category}_{product['name']}")])
+            keyboard.append([InlineKeyboardButton("🔙 Retour aux catégories", callback_data="view_categories")])
+        
+            await query.message.edit_text(
+                f"📱 Produits dans {category} :",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        return CHOOSING
 
     elif query.data == "show_categories":
         keyboard = []
@@ -1615,6 +1624,28 @@ async def clean_inactive_users(context: ContextTypes.DEFAULT_TYPE):
     print(f"[DEBUG] Utilisateurs supprimés: {users_removed}")
     
     return users_removed
+
+async def waiting_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gère le prix du produit"""
+    context.user_data['temp_product_price'] = update.message.text
+
+    # Supprimer le message de l'utilisateur
+    await update.message.delete()
+
+    # Supprimer le message précédent
+    if context.user_data.get('last_message_id'):
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=context.user_data['last_message_id']
+            )
+        except Exception as e:
+            print(f"Erreur lors de la suppression du message: {e}")
+
+    message = await update.message.reply_text("📝 Veuillez entrer la description du produit :")
+    context.user_data['last_message_id'] = message.message_id
+    
+    return WAITING_PRODUCT_DESCRIPTION
 
 def main():
     """Fonction principale du bot"""
