@@ -884,46 +884,55 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             return await show_admin_menu(update, context)
 
     elif query.data.startswith("product_"):
-            _, category, product_name = query.data.split("_", 2)
-            context.user_data['current_media_index'] = 0
-            product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
-        
-            if product:
-                caption = f"📱 *{product['name']}*\n\n"
-                caption += f"💰 *Prix:*\n{product['price']}\n\n"
-                caption += f"📝 *Description:*\n{product['description']}"
-            
-                if 'media' in product and product['media']:
-                    media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
-                    total_media = len(media_list)
-                    current_media = media_list[0]
-                
-                    keyboard = []
-                    if total_media > 1:
-                        keyboard.append([
-                            InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
-                            InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
-                        ])
-                    keyboard.append([InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")])
-                
-                    await query.message.delete()
-                
-                    if current_media['media_type'] == 'photo':
-                        message = await context.bot.send_photo(
-                            chat_id=query.message.chat_id,
-                            photo=current_media['media_id'],
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='Markdown'
-                        )
-                    else:
-                        message = await context.bot.send_video(
-                            chat_id=query.message.chat_id,
-                            video=current_media['media_id'],
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='Markdown'
-                        )
+        _, category, product_name = query.data.split("_", 2)
+        context.user_data['current_media_index'] = 0
+        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
+
+        if product:
+            caption = f"📱 *{product['name']}*\n\n"
+            caption += f"💰 *Prix:*\n{product['price']}\n\n"
+            caption += f"📝 *Description:*\n{product['description']}"
+
+            if 'media' in product and product['media']:
+                media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
+                total_media = len(media_list)
+                current_media = media_list[0]
+
+                keyboard = []
+                if total_media > 1:
+                    keyboard.append([
+                        InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
+                        InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
+                    ])
+                keyboard.append([InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")])
+
+                await query.message.delete()
+
+                if current_media['media_type'] == 'photo':
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id,
+                        photo=current_media['media_id'],
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await context.bot.send_video(
+                        chat_id=query.message.chat_id,
+                        video=current_media['media_id'],
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+            else:
+                # Handling products without media
+                await query.edit_message_text(
+                    text=caption,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")
+                    ]]),
+                    parse_mode='Markdown'
+                )
 
     # Ajoutez ces gestionnaires pour la navigation entre les médias
     elif query.data.startswith(("next_media_", "prev_media_")):
