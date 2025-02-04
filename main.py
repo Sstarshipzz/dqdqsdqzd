@@ -3,7 +3,6 @@ import logging
 import asyncio
 import shutil
 import os
-from telegram import InputMediaPhoto, InputMediaVideo
 from datetime import datetime, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -433,41 +432,43 @@ async def handle_product_price(update: Update, context: ContextTypes.DEFAULT_TYP
     return WAITING_PRODUCT_DESCRIPTION
 
 async def handle_product_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la description du produit"""
-    context.user_data['temp_product_description'] = update.message.text
-
-    # Supprimer le message de l'utilisateur
-    await update.message.delete()
-
-    # Supprimer le message de demande de description
-    if context.user_data.get('description_msg_id'):  # Utilisation du nouveau nom
-        try:
-            await context.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=context.user_data['description_msg_id']
-            )
-        except Exception as e:
-            print(f"Erreur lors de la suppression du message de description: {e}")
-
-    message = await update.message.reply_text(
+    """Gère l'entrée de la description du produit"""
+    description = update.message.text
+    context.user_data['temp_product_description'] = description
+    
+    # Initialiser la liste des médias
+    context.user_data['temp_product_media'] = []
+    
+    # Supprimer le message précédent
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id,
+        message_id=update.message.message_id - 1
+    )
+    
+    await update.message.reply_text(
         "📸 Envoyez les photos ou vidéos du produit (plusieurs possibles)\n"
-        "Si vous ne souhaitez pas ajouter de médias, cliquez sur Ignorer :",
+        "Une fois terminé, cliquez sur Terminé :",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏩ Ignorer", callback_data="finish_media")],
+            [InlineKeyboardButton("✅ Terminé", callback_data="finish_media")],
+            [InlineKeyboardButton("⏩ Ignorer", callback_data="skip_media")],
             [InlineKeyboardButton("🔙 Annuler", callback_data="cancel_add_product")]
         ])
     )
-    context.user_data['last_message_id'] = message.message_id
-
+    
+    # Supprimer le message de l'utilisateur
+    await update.message.delete()
+    
     return WAITING_PRODUCT_MEDIA
 
 async def handle_product_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère l'ajout des médias (photos ou vidéos) du produit"""
+    # Initialiser les données si elles n'existent pas
     if 'temp_product_media' not in context.user_data:
         context.user_data['temp_product_media'] = []
+    if 'media_count' not in context.user_data:  # Ajout de cette condition
         context.user_data['media_count'] = 0
 
-    # Supprimer le message précédent d'instruction
+    # Supprimer le message précédent d'instruction s'il existe
     if context.user_data.get('last_message_id'):
         try:
             await context.bot.delete_message(
@@ -477,21 +478,24 @@ async def handle_product_media(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             print(f"Erreur lors de la suppression du message: {e}")
 
+    # Incrémenter le compteur
     context.user_data['media_count'] += 1
+
+    # Créer le nouveau média
     new_media = {
         'media_id': update.message.photo[-1].file_id if update.message.photo else update.message.video.file_id,
         'media_type': 'photo' if update.message.photo else 'video',
         'order_index': context.user_data['media_count']
     }
-    
+
     context.user_data['temp_product_media'].append(new_media)
-    
+
     # Supprimer le message de l'utilisateur
     await update.message.delete()
 
+    # Envoyer le message de confirmation
     message = await update.message.reply_text(
-        f"✅ {len(context.user_data['temp_product_media'])} média(s) ajouté(s)\n"
-        "Vous pouvez continuer à ajouter des médias ou terminer :",
+        "Cliquez sur Terminé pour valider :",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Terminé", callback_data="finish_media")],
             [InlineKeyboardButton("🔙 Annuler", callback_data="cancel_add_product")]
@@ -502,7 +506,6 @@ async def handle_product_media(update: Update, context: ContextTypes.DEFAULT_TYP
     return WAITING_PRODUCT_MEDIA
 
 async def finish_product_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Finalise l'ajout des médias et sauvegarde le produit"""
     query = update.callback_query
     await query.answer()
 
@@ -881,30 +884,34 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             return await show_admin_menu(update, context)
 
     elif query.data.startswith("product_"):
-        _, category, product_name = query.data.split("_", 2)
-        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
-    
-        if product:
-            caption = f"📱 *{product['name']}*\n\n"
-            caption += f"💰 *Prix:*\n{product['price']}\n\n"
-            caption += f"📝 *Description:*\n{product['description']}"
+            _, category, product_name = query.data.split("_", 2)
+            context.user_data['current_media_index'] = 0
+            product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
         
-            keyboard = [[InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]]
-
-            # Supprimer le message précédent
-            await query.message.delete()
-
-            if 'media' in product and product['media']:
-                # Si le produit a des médias
-                media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
+            if product:
+                caption = f"📱 *{product['name']}*\n\n"
+                caption += f"💰 *Prix:*\n{product['price']}\n\n"
+                caption += f"📝 *Description:*\n{product['description']}"
             
-                if len(media_list) == 1:
-                    # Si un seul média, l'envoyer avec le bouton
-                    media = media_list[0]
-                    if media['media_type'] == 'photo':
+                if 'media' in product and product['media']:
+                    media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
+                    total_media = len(media_list)
+                    current_media = media_list[0]
+                
+                    keyboard = []
+                    if total_media > 1:
+                        keyboard.append([
+                            InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
+                            InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
+                        ])
+                    keyboard.append([InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")])
+                
+                    await query.message.delete()
+                
+                    if current_media['media_type'] == 'photo':
                         message = await context.bot.send_photo(
                             chat_id=query.message.chat_id,
-                            photo=media['media_id'],
+                            photo=current_media['media_id'],
                             caption=caption,
                             reply_markup=InlineKeyboardMarkup(keyboard),
                             parse_mode='Markdown'
@@ -912,138 +919,51 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                     else:
                         message = await context.bot.send_video(
                             chat_id=query.message.chat_id,
-                            video=media['media_id'],
+                            video=current_media['media_id'],
                             caption=caption,
                             reply_markup=InlineKeyboardMarkup(keyboard),
                             parse_mode='Markdown'
                         )
-                else:
-                        # Pour plusieurs médias
-                    media_group = []
-                    for i, media in enumerate(media_list):
-                        if media['media_type'] == 'photo':
-                            media_item = InputMediaPhoto(
-                                media=media['media_id'],
-                                caption=caption if i == 0 else None,
-                                parse_mode='Markdown' if i == 0 else None
-                            )
-                        else:
-                            media_item = InputMediaVideo(
-                                media=media['media_id'],
-                                caption=caption if i == 0 else None,
-                                parse_mode='Markdown' if i == 0 else None
-                            )
-                        media_group.append(media_item)
-
-                    messages = await context.bot.send_media_group(
-                        chat_id=query.message.chat_id,
-                        media=media_group
-                    )
-                
-                    # Stocker les IDs des messages pour la suppression future
-                    context.user_data['current_media_messages'] = [msg.message_id for msg in messages]
-                
-                    # Envoyer le bouton de retour
-                    message = await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text="🔙",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("Retour à la catégorie", callback_data=f"view_{category}")
-                        ]])
-                    )
-            else:
-                # Si le produit n'a pas de médias
-                message = await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-        
-            context.user_data['last_message_id'] = message.message_id
-            return CHOOSING
 
     # Ajoutez ces gestionnaires pour la navigation entre les médias
     elif query.data.startswith(("next_media_", "prev_media_")):
-        is_next = query.data.startswith("next_media_")
-        _, _, category, product_name = query.data.split("_", 3)
-    
-        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
-        if product and 'media' in product and product['media']:
-            media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
-            total_media = len(media_list)
+        try:
+            _, direction, category, product_name = query.data.split("_", 3)
         
-            current_index = context.user_data.get('current_media_index', 0)
-            if is_next:
-                current_index = (current_index + 1) % total_media
-            else:
-                current_index = (current_index - 1) % total_media
-            context.user_data['current_media_index'] = current_index
+            product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
         
-            current_media = media_list[current_index]
-        
-            caption = f"📱 *{product['name']}*\n\n"
-            caption += f"💰 *Prix:*\n{product['price']}\n\n"
-            caption += f"📝 *Description:*\n{product['description']}"
-        
-            keyboard = [
-                [
-                    InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
-                    InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
-                ],
-                [InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]
-            ]
-        
-            if current_media['media_type'] == 'photo':
-                await query.message.edit_media(
-                    media=InputMediaPhoto(
-                        media=current_media['media_id'],
-                        caption=caption,
-                        parse_mode='Markdown'
-                    ),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            else:
-                await query.message.edit_media(
-                    media=InputMediaVideo(
-                        media=current_media['media_id'],
-                        caption=caption,
-                        parse_mode='Markdown'
-                    ),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-        
-        await query.answer()
-        return CHOOSING
-
-    elif query.data.startswith("product_"):
-        _, category, product_name = query.data.split("_", 2)
-        context.user_data['current_media_index'] = 0
-        product = next((p for p in CATALOG[category] if p['name'] == product_name), None)
-    
-        if product:
-            caption = f"📱 *{product['name']}*\n\n"
-            caption += f"💰 *Prix:*\n{product['price']}\n\n"
-            caption += f"📝 *Description:*\n{product['description']}"
-        
-            keyboard = [[InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]]
-
-            if 'media' in product and product['media']:
-                # Si le produit a des médias
-                media_list = sorted(product['media'], key=lambda x: x.get('order_index', 0))
-                total_media = len(media_list)
-                current_media = media_list[0]
+            if product and 'media' in product:
+                current_index = context.user_data.get('current_media_index', 0)
+                total_media = len(product['media'])
             
-                # Ajouter les boutons de navigation si plus d'un média
+                if direction == "next":
+                    current_index = (current_index + 1) % total_media
+                else:  # prev
+                    current_index = (current_index - 1) % total_media
+            
+                context.user_data['current_media_index'] = current_index
+            
+                # Préparer le message avec numérotation séquentielle
+                caption = f"📱 *{product['name']}*\n\n"
+                caption += f"💰 *Prix:*\n{product['price']}\n\n"
+                caption += f"📝 *Description:*\n{product['description']}"
+                caption += f"\n\n📸 Média {current_index + 1}/{total_media}"  # Numérotation simplifiée
+            
+                keyboard = []
                 if total_media > 1:
-                    nav_buttons = [
+                    keyboard.append([
                         InlineKeyboardButton("⬅️ Précédent", callback_data=f"prev_media_{category}_{product_name}"),
                         InlineKeyboardButton("➡️ Suivant", callback_data=f"next_media_{category}_{product_name}")
-                    ]
-                    keyboard.insert(0, nav_buttons)
+                    ])
             
-                await query.message.delete()
+                keyboard.append([InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")])
             
+                try:
+                    await query.message.delete()
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du message: {e}")
+            
+                current_media = product['media'][current_index]
                 if current_media['media_type'] == 'photo':
                     message = await context.bot.send_photo(
                         chat_id=query.message.chat_id,
@@ -1052,7 +972,7 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
-                else:
+                else:  # video
                     message = await context.bot.send_video(
                         chat_id=query.message.chat_id,
                         video=current_media['media_id'],
@@ -1060,15 +980,12 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
-            else:
-                # Si le produit n'a pas de médias
-                await query.message.edit_text(
-                    text=caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
             
-            return CHOOSING
+                context.user_data['last_product_message_id'] = message.message_id
+            
+        except Exception as e:
+            print(f"Erreur lors de la navigation des médias: {e}")
+            await query.answer("Une erreur est survenue")
 
     elif query.data == "show_categories":
         keyboard = []
@@ -1246,30 +1163,64 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("view_"):
         category = query.data.replace("view_", "")
         if category in CATALOG:
-            # Afficher tous les produits de la catégorie
-            keyboard = []
-            for product in CATALOG[category]:
-                keyboard.append([InlineKeyboardButton(product['name'], callback_data=f"product_{category}_{product['name']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Retour aux catégories", callback_data="view_categories")])
+            products = CATALOG[category]
         
-            await query.message.edit_text(
-                f"📱 Produits dans {category} :",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        return CHOOSING
+            # Si on revient d'un produit avec média, supprimer le message du produit
+            last_product_message_id = context.user_data.get('last_product_message_id')
+            if last_product_message_id:
+                try:
+                    await context.bot.delete_message(
+                        chat_id=query.message.chat_id,
+                        message_id=last_product_message_id
+                    )
+                    del context.user_data['last_product_message_id']
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du message produit: {e}")
 
-    elif query.data == "view_categories":
-        # Afficher toutes les catégories
+            # Afficher la liste des produits
+            text = f"*{category}*\n\n"
+            keyboard = []
+            for product in products:
+                keyboard.append([InlineKeyboardButton(
+                    product['name'],
+                    callback_data=f"product_{category}_{product['name']}"
+                )])
+            
+            keyboard.append([InlineKeyboardButton("🔙 Retour au menu", callback_data="show_categories")])
+            
+            # Envoyer un nouveau message si nécessaire
+            if query.message:
+                try:
+                    await query.edit_message_text(
+                        text=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    print(f"Erreur lors de l'édition du message: {e}")
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+
+    elif query.data == "show_categories":
         keyboard = []
+        # Créer uniquement les boutons de catégories
         for category in CATALOG.keys():
-            keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
-        keyboard.append([InlineKeyboardButton("🔙 Retour au menu", callback_data="start")])
-    
-        await query.message.edit_text(
-            "📱 Choisissez une catégorie :",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            if category != 'stats':
+                keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
+        
+        # Ajouter uniquement le bouton retour à l'accueil
+        keyboard.append([InlineKeyboardButton("🔙 Retour à l'accueil", callback_data="back_to_home")])
+        
+        await query.edit_message_text(
+            "📋 *Menu des catégories*\n\n"
+            "Choisissez une catégorie pour voir les produits :",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
         )
-        return CHOOSING
 
     elif query.data == "back_to_home":
         keyboard = [
@@ -1646,29 +1597,6 @@ async def clean_inactive_users(context: ContextTypes.DEFAULT_TYPE):
     print(f"[DEBUG] Utilisateurs supprimés: {users_removed}")
     
     return users_removed
-
-async def waiting_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère le prix du produit"""
-    context.user_data['temp_product_price'] = update.message.text
-
-    # Supprimer le message de l'utilisateur
-    await update.message.delete()
-
-    # Supprimer le message précédent
-    if context.user_data.get('last_message_id'):
-        try:
-            await context.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=context.user_data['last_message_id']
-            )
-        except Exception as e:
-            print(f"Erreur lors de la suppression du message: {e}")
-
-    # Stocker le message de description pour le supprimer plus tard
-    desc_message = await update.message.reply_text("📝 Veuillez entrer la description du produit :")
-    context.user_data['description_msg_id'] = desc_message.message_id  # Nouveau nom de variable
-    
-    return WAITING_PRODUCT_DESCRIPTION
 
 def main():
     """Fonction principale du bot"""
