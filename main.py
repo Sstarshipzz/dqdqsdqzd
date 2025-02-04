@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import os
 from datetime import datetime, time
+from telegram.error import BadRequest
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, 
@@ -575,9 +576,7 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "add_category":
         await query.message.edit_text(
             "📝 Veuillez entrer le nom de la nouvelle catégorie:",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Annuler", callback_data="cancel_add_category")
-            ]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Annuler", callback_data="cancel_add_category")]])
         )
         return WAITING_CATEGORY_NAME
 
@@ -587,7 +586,7 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             if category != 'stats':
                 keyboard.append([InlineKeyboardButton(category, callback_data=f"select_category_{category}")])
         keyboard.append([InlineKeyboardButton("🔙 Annuler", callback_data="cancel_add_product")])
-        
+
         await query.message.edit_text(
             "📝 Sélectionnez la catégorie pour le nouveau produit:",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -927,13 +926,14 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
 
                 context.user_data['last_media_message_id'] = message.message_id
             else:
-                await query.edit_message_text(
-                    text=caption,
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")
-                    ]]),
-                    parse_mode='Markdown'
-                )
+                try:
+                    await query.edit_message_text(
+                        text=caption,
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour à la catégorie", callback_data=f"view_{category}")]]),
+                        parse_mode='Markdown'
+                    )
+                except BadRequest as e:
+                    print(f"Erreur lors de la modification du message: {e}")
                 
     # Ajoutez ces gestionnaires pour la navigation entre les médias
     elif query.data.startswith(("next_media_", "prev_media_")):
@@ -1192,12 +1192,15 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                 )])
             keyboard.append([InlineKeyboardButton("🔙 Retour au menu", callback_data="show_categories")])
 
-            await query.edit_message_text(
-                text=text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            except BadRequest as e:
+                print(f"Erreur lors de la modification du message: {e}")
+                d
     elif query.data == "show_categories":
         keyboard = []
         # Créer uniquement les boutons de catégories
