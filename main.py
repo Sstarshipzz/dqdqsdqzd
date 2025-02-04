@@ -1200,17 +1200,17 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
                 )
             except BadRequest as e:
                 print(f"Erreur lors de la modification du message: {e}")
-                d
+
     elif query.data == "show_categories":
         keyboard = []
         # Créer uniquement les boutons de catégories
         for category in CATALOG.keys():
             if category != 'stats':
                 keyboard.append([InlineKeyboardButton(category, callback_data=f"view_{category}")])
-        
+
         # Ajouter uniquement le bouton retour à l'accueil
         keyboard.append([InlineKeyboardButton("🔙 Retour à l'accueil", callback_data="back_to_home")])
-        
+
         await query.edit_message_text(
             "📋 *Menu des catégories*\n\n"
             "Choisissez une catégorie pour voir les produits :",
@@ -1227,14 +1227,14 @@ async def handle_normal_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             ],
             [InlineKeyboardButton("🥔 Canal potato", url="https://doudlj.org/joinchat/5ZEmn25bOsTR7f-aYdvC0Q")]
         ]
-        
+
         welcome_text = (
             "🌿 *Bienvenue chez Green Attack* 🌿\n\n"
             "Découvrez notre gamme complète de produits de qualité.\n"
             "Nous proposons une sélection unique pour répondre à vos besoins.\n\n"
             "📋 Cliquez sur MENU pour voir nos catégories"
         )
-        
+
         await query.edit_message_text(
             welcome_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
